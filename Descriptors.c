@@ -191,27 +191,29 @@ const USB_Descriptor_String_t LanguageString =
  */
 const USB_Descriptor_String_t ProductString =
 {
-	.Header                 = {.Size = USB_STRING_LEN(16), .Type = DTYPE_String},
+	.Header                 = {.Size = USB_STRING_LEN(14), .Type = DTYPE_String},
 
-	#if DEVICE_PID == 0x0036
-	.UnicodeString          = L"Arduino Leonardo" 
-	#elif DEVICE_PID == 0x0037
-	.UnicodeString			= L"Arduino Micro   "
-	#elif DEVICE_PID == 0x003C
-	.UnicodeString			= L"Arduino Esplora "
+#if DEVICE_VID == 0x1B4F
+	#if DEVICE_PID == 0x9205
+	.UnicodeString          = L"Pro Micro 5V  "
+	#elif DEVICE_PID == 0x9203
+	.UnicodeString			= L"Pro Micro 3.3V"
 	#else
-	.UnicodeString			= L"USB IO board    "
+	.UnicodeString			= L"USB IO board  "
 	#endif
+#else
+	.UnicodeString			= L"USB IO board  "
+#endif
 };
 
 const USB_Descriptor_String_t ManufNameString = 
 {
-	.Header					= {.Size = USB_STRING_LEN(11), .Type = DTYPE_String},
+	.Header					= {.Size = USB_STRING_LEN(20), .Type = DTYPE_String},
 	
-	#if DEVICE_VID == 0x2341
-	.UnicodeString			= L"Arduino LLC"
+	#if DEVICE_VID == 0x1B4F
+	.UnicodeString			= L"SparkFun Electronics"
 	#else
-	.UnicodeString			= L"Unknown    "
+	.UnicodeString			= L"Unknown             "
 	#endif
 };
 

@@ -36,6 +36,10 @@
 #define  INCLUDE_FROM_CATERINA_C
 #include "Caterina.h"
 
+#define DOUBLE_RESET_PROGRAM_MODE
+#define DOUBLE_RESET_DISABLE_TIMEOUT
+//#define ALWAYS_START_PROGRAM_MODE
+
 /** Contains the current baud rate and other settings of the first virtual serial port. This must be retained as some
  *  operating systems will not open the port unless the settings can be set successfully.
  */
@@ -57,13 +61,14 @@ static uint32_t CurrAddress;
 static bool RunBootloader = true;
 
 /* Pulse generation counters to keep track of the time remaining for each pulse type */
-#define TX_RX_LED_PULSE_PERIOD 100
-uint16_t TxLEDPulse = 0; // time remaining for Tx LED pulse
-uint16_t RxLEDPulse = 0; // time remaining for Rx LED pulse
+#define DATA_LED_PULSE_PERIOD 100
+uint16_t DataLEDPulse = 0; // time remaining for Data LED pulse
 
 /* Bootloader timeout timer */
-#define TIMEOUT_PERIOD	8000
-uint16_t Timeout = 0;
+#define TIMEOUT_PERIOD  8000
+#define EXT_RESET_TIMEOUT_PERIOD  750
+static bool disableTimeout = false;
+volatile uint16_t Timeout = 0;
 
 uint16_t bootKey = 0x7777;
 volatile uint16_t *const bootKeyPtr = (volatile uint16_t *)0x0800;
@@ -83,8 +88,7 @@ void StartSketch(void)
 	MCUCR = 0;
 
 	L_LED_OFF();
-	TX_LED_OFF();
-	RX_LED_OFF();
+	DATA_LED_OFF();
 
 	/* jump to beginning of application space */
 	__asm__ volatile("jmp 0x0000");
@@ -118,22 +122,44 @@ int main(void)
 	uint8_t  mcusr_state = MCUSR;		// store the initial state of the Status register
 	MCUSR = 0;							// clear all reset flags	
 
-	/* Watchdog may be configured with a 15 ms period so must disable it before going any further */
-	wdt_disable();
-	
+	/* Setup hardware required for the bootloader */
+	SetupHardware();
+
+	bool sketchPresent = (pgm_read_word(0) != 0xFFFF);
+
 	if (mcusr_state & (1<<EXTRF)) {
+	#if defined(DOUBLE_RESET_PROGRAM_MODE) && !defined(ALWAYS_START_PROGRAM_MODE)
+		if (sketchPresent) {
+			if (bootKeyPtrVal == bootKey) {
+			#if defined(DOUBLE_RESET_DISABLE_TIMEOUT)
+				disableTimeout = true;
+			#endif
+			} else {
+				*bootKeyPtr = bootKey;
+				sei();
+				Timeout = 0;
+				while (Timeout <= EXT_RESET_TIMEOUT_PERIOD)
+					;
+				cli();
+				*bootKeyPtr = 0;
+				StartSketch();
+			}
+		}
+	#endif
 		// External reset -  we should continue to self-programming mode.
-	} else if ((mcusr_state & (1<<PORF)) && (pgm_read_word(0) != 0xFFFF)) {		
+	} else if ((mcusr_state & (1<<PORF)) && sketchPresent) {
+	#if !defined(ALWAYS_START_PROGRAM_MODE)
 		// After a power-on reset skip the bootloader and jump straight to sketch 
-		// if one exists.	
+		// if one exists.
 		StartSketch();
-	} else if ((mcusr_state & (1<<WDRF)) && (bootKeyPtrVal != bootKey) && (pgm_read_word(0) != 0xFFFF)) {	
+	#endif
+	} else if ((mcusr_state & (1<<WDRF)) && (bootKeyPtrVal != bootKey) && sketchPresent) {
 		// If it looks like an "accidental" watchdog reset then start the sketch.
 		StartSketch();
 	}
 	
-	/* Setup hardware required for the bootloader */
-	SetupHardware();
+	/* Initialize USB Subsystem */
+	USB_Init();
 
 	/* Enable global interrupts so that the USB stack can function */
 	sei();
@@ -145,7 +171,7 @@ int main(void)
 		CDC_Task();
 		USB_USBTask();
 		/* Time out and start the sketch if one is present */
-		if (Timeout > TIMEOUT_PERIOD)
+		if (!disableTimeout && (Timeout > TIMEOUT_PERIOD))
 			RunBootloader = false;
 
 		LEDPulse();
@@ -159,7 +185,7 @@ int main(void)
 }
 
 /** Configures all hardware required for the bootloader. */
-void SetupHardware(void)
+inline void SetupHardware(void)
 {
 	/* Disable watchdog if enabled by bootloader/fuses */
 	MCUSR &= ~(1 << WDRF);
@@ -175,8 +201,7 @@ void SetupHardware(void)
 	LED_SETUP();
 	CPU_PRESCALE(0); 
 	L_LED_OFF();
-	TX_LED_OFF();
-	RX_LED_OFF();
+	DATA_LED_OFF();
 	
 	/* Initialize TIMER1 to handle bootloader timeout and LED tasks.  
 	 * With 16 MHz clock and 1/64 prescaler, timer 1 is clocked at 250 kHz
@@ -184,13 +209,15 @@ void SetupHardware(void)
 	 * This interrupt is disabled selectively when doing memory reading, erasing,
 	 * or writing since SPM has tight timing requirements.
 	 */ 
+#if F_CPU == 8000000
+	OCR1AH = 0;
+	OCR1AL = 125;
+#else
 	OCR1AH = 0;
 	OCR1AL = 250;
+#endif
 	TIMSK1 = (1 << OCIE1A);					// enable timer 1 output compare A match interrupt
 	TCCR1B = ((1 << CS11) | (1 << CS10));	// 1/64 prescaler on timer 1 input
-
-	/* Initialize USB Subsystem */
-	USB_Init();
 }
 
 //uint16_t ctr = 0;
@@ -201,10 +228,8 @@ ISR(TIMER1_COMPA_vect, ISR_BLOCK)
 	TCNT1L = 0;
 
 	/* Check whether the TX or RX LED one-shot period has elapsed.  if so, turn off the LED */
-	if (TxLEDPulse && !(--TxLEDPulse))
-		TX_LED_OFF();
-	if (RxLEDPulse && !(--RxLEDPulse))
-		RX_LED_OFF();
+	if (DataLEDPulse && !(--DataLEDPulse))
+		DATA_LED_OFF();
 	
 	if (pgm_read_word(0) != 0xFFFF)
 		Timeout++;
@@ -444,8 +469,8 @@ static void WriteNextResponseByte(const uint8_t Response)
 	/* Write the next byte to the IN endpoint */
 	Endpoint_Write_8(Response);
 	
-	TX_LED_ON();
-	TxLEDPulse = TX_RX_LED_PULSE_PERIOD;
+	DATA_LED_ON();
+	DataLEDPulse = DATA_LED_PULSE_PERIOD;
 }
 
 #define STK_OK              0x10
@@ -474,8 +499,8 @@ void CDC_Task(void)
 	if (!(Endpoint_IsOUTReceived()))
 	  return;
 	  
-	RX_LED_ON();
-	RxLEDPulse = TX_RX_LED_PULSE_PERIOD;
+	DATA_LED_ON();
+	DataLEDPulse = DATA_LED_PULSE_PERIOD;
 
 	/* Read in the bootloader command (first byte sent from host) */
 	uint8_t Command = FetchNextCommandByte();
@@ -487,6 +512,7 @@ void CDC_Task(void)
 		* bootloder has time to respond and service any 
 		* subsequent requests */
 		Timeout = TIMEOUT_PERIOD - 500;
+		disableTimeout = false;
 	
 		/* Re-enable RWW section - must be done here in case 
 		 * user has disabled verification on upload.  */

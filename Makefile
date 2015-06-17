@@ -47,18 +47,14 @@
 #----------------------------------------------------------------------------
 
 # USB vendor ID (VID)
-# reuse of this VID by others is forbidden by USB-IF
-# official Arduino LLC VID
-# VID = 0x2341
-
+# SparkFun
+VID = 0x1B4F
 
 # USB product ID (PID)
-# official Leonardo PID
-# PID = 0x0036
-# official Micro PID
-# PID = 0x0037
-# official Esplora PID
-# PID = 0x003C
+# SparkFun ProMicro 5v
+PID = 0x9205
+# SparkFun ProMicro 3.3V
+#PID = 0x9203
 
 # MCU name
 MCU = atmega32u4
@@ -127,7 +123,7 @@ OBJDIR = .
 
 
 # Path to the LUFA library
-LUFA_PATH = ../../../../../../LUFA/LUFA-111009
+LUFA_PATH = LUFA-111009
 
 
 # LUFA library compile-time options and predefined tokens
@@ -439,7 +435,7 @@ OBJDUMP = avr-objdump
 SIZE = avr-size
 AR = avr-ar rcs
 NM = avr-nm
-AVRDUDE = /Applications/avrdude -C /Applications/avrdude.conf -B 1
+AVRDUDE = avrdude
 REMOVE = rm -f
 REMOVEDIR = rm -rf
 COPY = cp
